@@ -12,6 +12,9 @@ Sensores: confio un poquito mas en lo que reporta el sensor sin esmalte... chequ
 la calibracion se hara con el limpio como referencia (en principio el interno...)
 */
 
+boolean DEBUG = false;     // imprime el booteo
+#define ESPERA_BOOTEO 500   // en ms por cada inicializcion
+
 // timer y control
 #define SAMPLE_RATE 100   // en HZ
 #define PRESCALER 8   // para 100 hz no daria el OCR de 16 bits sin preescalar
@@ -30,17 +33,18 @@ const int CONTAR_HASTA = 3;
 int contador_clock = 0;
 
 // caracteres de control serial
-const char SEP = 9; // 9 es el tabulador, TAB
-const char INICIO = 33; // 33 es el signo de exclamacion, !
-const char LF = 10;     // ASCII salto de linea
-const char REQ = 63;     // ASCII para requerir comunicacion
-const char ACK = 64;     // ASCII que debiera mandar arduino al responder
-const char PIDE = 49;     // 1
-const char DETIENE = 48;  // 0
-const char CALIBRA = 61; // = para pedir re-calibracion e igualar sensores de presion
-const char DESCALIBRA = 60; // < para pedir anular la calibracion de sensores presion
-const char OK_CALIB = 43; // + para confirmar que se calibró
-const char OK_DESCALIB = 45; // - para confirmar que se DEScalibró
+const char SEP = 9;           // 9 es el tabulador, TAB    44 es la coma ,
+const char INICIO = 33;       // 33 es el signo de exclamacion, !
+const char LF = 10;           // ASCII salto de linea
+const char REQ = 63;          // ? ASCII para requerir comunicacion
+const char ACK = 64;          // ASCII que debiera mandar arduino al responder
+const char PIDE = 49;         // 1
+const char DETIENE = 48;      // 0
+const char CALIBRA = 61;      // = para pedir re-calibracion e igualar sensores de presion
+const char DESCALIBRA = 60;   // < para pedir anular la calibracion de sensores presion
+const char OK_CALIB = 43;     // + para confirmar que se calibró
+const char OK_DESCALIB = 45;  // - para confirmar que se DEScalibró
+const char PEDIR_FILA = 35;   // # para solicitar fila de datos cuando NO esta andando
 
 boolean confirmar_conexion = false;
 
@@ -71,13 +75,20 @@ boolean debo_descalibrar = false;
 boolean usando_calibracion = false;
 
 // acelerometro
+//#include <basicMPU6050.h> 
+//basicMPU6050<> mpu;
+
+// ADAFRUIT (muy lenta)
 #include <Adafruit_MPU6050.h>
 //#include <Adafruit_Sensor.h>
 //#include <Wire.h>
 Adafruit_MPU6050 mpu;
+
 float aceleracionX = 0;
 float aceleracionY = 0;
 float aceleracionZ = 0;
+
+
 
 
 // incluyo temperaturas referencia (enero 2021)
@@ -96,39 +107,42 @@ void setup() {
   Serial.begin(115200);
   intervaloTiempo = 1.0 / SAMPLE_RATE;
   
-  for (int i = 0; i < 10; i++){
-    Serial.println("Arranca " + String(i));
-    delay(500); // margen de tiempo
+  if (DEBUG) { 
+    for (int i = 0; i < 10; i++){
+      Serial.println("Arranca " + String(i));
+      delay(ESPERA_BOOTEO); // margen de tiempo
+    }
   }
-
   
-  Serial.println("iniciar_timer");
+  if (DEBUG) Serial.println("iniciar_timer");
   iniciar_timer();
-  delay(500); // margen de tiempo
+  if (DEBUG) delay(ESPERA_BOOTEO); // margen de tiempo
 
-  Serial.println("iniciar_BME");
+  if (DEBUG) Serial.println("iniciar_BME");
   iniciar_BME();
-  delay(500); // margen de tiempo
+  if (DEBUG) delay(ESPERA_BOOTEO); // margen de tiempo
   
-  Serial.println("iniciar_pulsador");
+  if (DEBUG) Serial.println("iniciar_pulsador");
   iniciar_pulsador();
-  delay(500); // margen de tiempo
+  if (DEBUG) delay(ESPERA_BOOTEO); // margen de tiempo
 
-  Serial.println("iniciar_distancia");
+  if (DEBUG) Serial.println("iniciar_distancia");
   iniciar_distancia();
-  delay(500); // margen de tiempo
+  if (DEBUG) delay(ESPERA_BOOTEO); // margen de tiempo
 
-  Serial.println("iniciar_rueda");
+  if (DEBUG) Serial.println("iniciar_rueda");
   iniciar_rueda();
-  delay(500); // margen de tiempo
+  if (DEBUG) delay(ESPERA_BOOTEO); // margen de tiempo
 
-  Serial.println("iniciar_acelerometro");
+  if (DEBUG) Serial.println("iniciar_acelerometro");
   iniciar_acelerometro();
-  delay(500); // margen de tiempo  
+  if (DEBUG) delay(ESPERA_BOOTEO); // margen de tiempo  
 
-  Serial.println("terminada inicializacion");
+  Wire.setClock(400000);
+
+  if (DEBUG) Serial.println("terminada inicializacion");
     
-  delay(250); // margen de tiempo
+  if (DEBUG) delay(ESPERA_BOOTEO); // margen de tiempo
 }
 
 void loop() {
@@ -233,11 +247,20 @@ void leer_serial() {
        debo_calibrar = true;
     }
 
-        // caracter ">" para anular calibracion
+    // caracter ">" para anular calibracion
     if (recibido == DESCALIBRA && funcionando == false) {
        debo_descalibrar = true;
     }
     
+    // caracter "#" para solicitar una fila de datos mientras NO esta corriendo
+    if (recibido == PEDIR_FILA && funcionando == false) {
+      //enviar_encabezados();
+      leer_presiones();
+      leer_temperaturas();
+      leer_distancia();
+      leer_acelerometro();
+      enviar_valores();
+    }
   }  
 }
 
@@ -337,7 +360,17 @@ void iniciar_rueda(){
   attachInterrupt(digitalPinToInterrupt(PIN_INTERRUPCION), interrupcionRueda, RISING);
 }
 
+
 void iniciar_acelerometro(){
+
+/*
+  // Set registers - Always required
+  mpu.setup();
+  // Initial calibration of gyro
+  //mpu.setBias();
+*/
+  
+  // ADAFRUIT (es muy lenta)
   // Try to initialize!
   if (!mpu.begin()) {
     Serial.println("Fallo el inicio del acelerometro!");
@@ -349,8 +382,33 @@ void iniciar_acelerometro(){
   mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);      //(MPU6050_BAND_5_HZ);      //    //(MPU6050_BAND_21_HZ);
-  mpu.setHighPassFilter(MPU6050_HIGHPASS_5_HZ);         //(MPU6050_HIGHPASS_DISABLE);
-  //mpu.setCycleRate(MPU6050_CYCLE_1_25_HZ);
+  mpu.setHighPassFilter(MPU6050_HIGHPASS_5_HZ);  //(MPU6050_HIGHPASS_5_HZ);         //(MPU6050_HIGHPASS_DISABLE);
+  //mpu.setCycleRate(MPU6050_CYCLE_40_HZ);            //(MPU6050_CYCLE_1_25_HZ);
+  mpu.enableCycle(false);
+
+  mpu.setGyroStandby(true, true, true);   // x y z
+  mpu.setTemperatureStandby(true);
+  
+}
+
+void leer_acelerometro() {
+
+  //-- Scaled and calibrated output:
+  // Accel
+  //aceleracionX = mpu.ax();
+  //aceleracionY = mpu.ay();
+  //aceleracionZ = mpu.az();
+
+  
+  // ADAFRUIT (es muy lenta)
+  // Get new sensor events with the readings
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  aceleracionX = a.acceleration.x;
+  aceleracionY = a.acceleration.y;
+  aceleracionZ = a.acceleration.z;
+  
 }
 
 
@@ -366,15 +424,6 @@ void leer_presiones() {
   presionAtmosferica = bmeB.readPressure()/100.0;
 }
 
-void leer_acelerometro() {
-  /* Get new sensor events with the readings */
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
-  aceleracionX = a.acceleration.x;
-  aceleracionY = a.acceleration.y;
-  aceleracionZ = a.acceleration.z;
-}
 
 void leer_temperaturas() {
   tempAdentro = bmeA.readTemperature();
@@ -403,7 +452,7 @@ void leer_distancia() {
 void enviar_valores() {
   // se envian en formato CSV: comas para separar columnas, saltos de linea para filas
   // cada columna contiene una medicion, cada fila un grupo de mediciones completo
-  // TIEMPO,INTERNA,T_INTERNA,EXTERNA,T_EXTERNA,RUEDITA,DISTANCIA
+  // TIEMPO,INTERNA,T_INTERNA,EXTERNA,T_EXTERNA,RUEDITA,DISTANCIA,ACEL_X, ACEL_Y, ACEL_Z
   Serial.print(tiempoTranscurrido);
   Serial.print(SEP);  
   Serial.print(presionAdentro);
@@ -418,14 +467,11 @@ void enviar_valores() {
   Serial.print(SEP);
   Serial.print(distancia_float_0);
   Serial.print(SEP);
-  Serial.print(aceleracionX);
+  Serial.print(aceleracionX); 
   Serial.print(SEP);  
   Serial.print(aceleracionY);
   Serial.print(SEP);
   Serial.println(aceleracionZ); // termina con salto de linea
-
-
-  
 }
 
 void enviar_encabezados(){
