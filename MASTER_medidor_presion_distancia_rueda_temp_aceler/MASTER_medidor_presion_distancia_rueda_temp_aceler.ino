@@ -16,8 +16,8 @@ boolean DEBUG = false;     // imprime el booteo
 #define ESPERA_BOOTEO 500   // en ms por cada inicializcion
 
 // timer y control
-#define SAMPLE_RATE 100   // en HZ
-#define PRESCALER 8   // para 100 hz no daria el OCR de 16 bits sin preescalar
+#define SAMPLE_RATE 150   // en HZ
+//#define PRESCALER 8   // para 100 hz no daria el OCR de 16 bits sin preescalar
 #define PULSO_LARGO 500   // en uS 
 #define PULSO_CORTO 200   // en uS --- el tamaño del pulso determina el nivel que aparece de audio despues del capacitor...
 const int pinDeSalida = 5;   // salida del pin de clock por pulsos de "audio"
@@ -29,7 +29,7 @@ boolean ultimo_pulso = false;
 boolean apagar = true;
 float tiempoTranscurrido = 0.0;
 float intervaloTiempo = 0.0;  // se calcula en setup!
-const int CONTAR_HASTA = 3;
+const int CONTAR_HASTA = 2;   // f = 300 / CONTAR_HASTA
 int contador_clock = 0;
 
 // caracteres de control serial
@@ -45,6 +45,8 @@ const char DESCALIBRA = 60;   // < para pedir anular la calibracion de sensores 
 const char OK_CALIB = 43;     // + para confirmar que se calibró
 const char OK_DESCALIB = 45;  // - para confirmar que se DEScalibró
 const char PEDIR_FILA = 35;   // # para solicitar fila de datos cuando NO esta andando
+
+String linea_a_enviar;
 
 boolean confirmar_conexion = false;
 
@@ -165,13 +167,15 @@ void loop() {
   // DEMAS PULSOS ---------------------------------
   if (hacer_pulso && !primer_pulso && funcionando){
     pulsar(PULSO_CORTO);
-      leer_presiones();
-      leer_temperaturas();
-      leer_distancia();
-      leer_acelerometro();
-      tiempoTranscurrido += intervaloTiempo;
-      enviar_valores();
+          //PORTC |= _BV(6);  // alto
+      leer_presiones();     // 2.2 ms !!!
+      leer_temperaturas();  // 1.2 ms (0.6 si leo una sola)
+      leer_distancia();     // 0.215 ms
+      leer_acelerometro();  // 1.13 ms
+      tiempoTranscurrido += intervaloTiempo;  // 10ms o 6.66~ ms
+      enviar_valores();     // 1.6 ~ 2.0 ms
     hacer_pulso = false;
+          //PORTC &= ~_BV(6); // bajo  
   }
 
   // RESPONDER CONFIRMACION DE CONEXION ----------
@@ -183,8 +187,8 @@ void loop() {
   if (debo_calibrar) calibrarPresion();
   if (debo_descalibrar) anularCalibracionPresion();
 
-  leerPulsador();
-  leer_serial();
+  leerPulsador();     // ambos pulsador y serial (sin mensajes)
+  leer_serial();      //        0.012 ms
 }
 
 void iniciar_timer() {
@@ -194,17 +198,17 @@ void iniciar_timer() {
   TCCR1A = (TCCR1A | _BV(COM1A1)) & ~_BV(COM1A0); // CTC
   TCCR1A &= ~(_BV(WGM10) | _BV(WGM11)); // waveform ctc
   TCCR1B = (TCCR1B | _BV(WGM12)) & ~_BV(WGM13); // waveform ctc
-  
-  TCCR1B = (TCCR1B | _BV(CS10)) & ~(_BV(CS11) | _BV(CS12)); // sin prescaler
+  TCCR1B = (TCCR1B | _BV(CS10)) & ~(_BV(CS11) | _BV(CS12)); // sin prescaler (=1)
 
   //TCCR1B = (TCCR1B | _BV(CS31)) & ~(_BV(CS30) | _BV(CS32)); // prescaler /8
   //TCCR1B = (TCCR1B | _BV(CS32)) & (TCCR1B | _BV(CS31)) & ~(_BV(CS31)); // prescaler /1024
   
   cli();
   
-  // la formula seria aproximadamente 16mhz / OCR1A / prescaler (1) / contar_hasta
+  // la formula de *frecuencia* seria aproximadamente:
+  // f = 16mhz / OCR1A / prescaler (1) / CONTAR_HASTA
   // como OCR1A no puede contar mas de 16 bit (65535), subdivido el numero real que necesito
-  // con el contar_hasta, se puede aumentar un poco la resolucion bajando OCR1A
+  // con el CONTAR_HASTA, se puede aumentar un poco la resolucion bajando OCR1A
   OCR1A = 53330; // leonardo pro micro
   
   //19987; MEGA //(F_CPU / SAMPLE_RATE) / PRESCALER;  // ojo que no se pase de 32k
@@ -336,12 +340,13 @@ void iniciar_BME() {
 
     // pareciera que si no esta activada la temperatura, la presion se mide mal, tal vez no la compensa
     // chequear en el datasheet
-    //                modo              temperatura       presion           humedad             filtro          standby (ms)
-    bmeA.setSampling(bmeA.MODE_NORMAL, bmeA.SAMPLING_X1, bmeA.SAMPLING_X1, bmeA.SAMPLING_NONE, bmeA.FILTER_X2, bmeA.STANDBY_MS_0_5);
+    //                modo             temperatura        presion            humedad             filtro          standby (ms)
+    bmeA.setSampling(bmeA.MODE_NORMAL, bmeA.SAMPLING_X16, bmeA.SAMPLING_X16, bmeA.SAMPLING_NONE, bmeA.FILTER_X2, bmeA.STANDBY_MS_0_5);
+    //bmeA.setSampling(bmeA.MODE_NORMAL, bmeA.SAMPLING_X1, bmeA.SAMPLING_X1, bmeA.SAMPLING_NONE, bmeA.FILTER_X2, bmeA.STANDBY_MS_0_5);
     
     // prueba a ver si se empatan mejor con el mismo rate y filtros
-    //bmeB.setSampling(bmeB.MODE_NORMAL, bmeB.SAMPLING_X1, bmeB.SAMPLING_X16, bmeB.SAMPLING_NONE, bmeB.FILTER_X16, bmeB.STANDBY_MS_0_5);
-    bmeB.setSampling(bmeB.MODE_NORMAL, bmeB.SAMPLING_X1, bmeB.SAMPLING_X1, bmeB.SAMPLING_NONE, bmeB.FILTER_X2, bmeB.STANDBY_MS_0_5);
+    //bmeB.setSampling(bmeB.MODE_NORMAL, bmeB.SAMPLING_X1, bmeB.SAMPLING_X1, bmeB.SAMPLING_NONE, bmeB.FILTER_X2, bmeB.STANDBY_MS_0_5);
+    bmeB.setSampling(bmeB.MODE_NORMAL, bmeB.SAMPLING_X16, bmeB.SAMPLING_X16, bmeB.SAMPLING_NONE, bmeB.FILTER_X2, bmeB.STANDBY_MS_0_5);
     
     // Serial.println("TODO OK");  // estorba al puerto serie
 }
@@ -426,8 +431,8 @@ void leer_presiones() {
 
 
 void leer_temperaturas() {
-  tempAdentro = bmeA.readTemperature();
-  tempAfuera = bmeB.readTemperature();
+  if (primer_pulso) tempAdentro = bmeA.readTemperature(); // lee solo la primera vez para ahorrar 0.6 ms
+  tempAfuera  = bmeB.readTemperature();
 }
 
 void leer_distancia() {
@@ -453,11 +458,20 @@ void enviar_valores() {
   // se envian en formato CSV: comas para separar columnas, saltos de linea para filas
   // cada columna contiene una medicion, cada fila un grupo de mediciones completo
   // TIEMPO,INTERNA,T_INTERNA,EXTERNA,T_EXTERNA,RUEDITA,DISTANCIA,ACEL_X, ACEL_Y, ACEL_Z
+
+  // tuve que achurar algunos caracteres para que alcance a dar 150 hz...
+  // eventualmente pueden enviarse los bytes raw de cada numero, en vez de strings, pero deben convertirse luego
+  //      considerar que aunque en string varian de tamaño, en raw tienen tamaño fijo (float, int etc)
+  //      son 10 valores, aprox 60 caracteres (mas salto), vs 4 bytes o menos por variable
+  //      el peligro puede ser distinguir entre el fin de linea y la ocurrencia random de esos caracteres
+
+
+  /*
   Serial.print(tiempoTranscurrido);
   Serial.print(SEP);  
   Serial.print(presionAdentro);
   Serial.print(SEP);
-  Serial.print(tempAdentro);
+  Serial.println(tempAdentro);
   Serial.print(SEP);  
   Serial.print((presionAtmosferica + offset_presion));
   Serial.print(SEP);
@@ -469,9 +483,94 @@ void enviar_valores() {
   Serial.print(SEP);
   Serial.print(aceleracionX); 
   Serial.print(SEP);  
-  Serial.print(aceleracionY);
+  Serial.print(aceleracionY); 
   Serial.print(SEP);
-  Serial.println(aceleracionZ); // termina con salto de linea
+  Serial.print(aceleracionZ);  // termina con salto de linea
+*/
+
+
+/*
+  const char COMA = SEP;
+  linea_a_enviar =  String(tiempoTranscurrido) + COMA +
+                    String(presionAdentro) + COMA +
+                    String(tempAdentro) + COMA +
+                    String(presionAtmosferica + offset_presion) + COMA +
+                    String(tempAfuera) + COMA +
+                    String(contadorRueda) + COMA +
+                    String(distancia_float_0) + COMA +
+                    String(aceleracionX, 2) + COMA +
+                    String(aceleracionY, 2) + COMA +
+                    String(aceleracionZ, 2);
+*/
+
+
+  linea_a_enviar =  String(tiempoTranscurrido*1000, 0) + SEP +
+                    presionAdentro + SEP +
+                    String(tempAdentro, 1)  + SEP +
+                    (presionAtmosferica + offset_presion) + SEP +
+                    String(tempAfuera, 1)   + SEP +
+                    contadorRueda + SEP +
+                    int(distancia_float_0)  + SEP +
+                    String(aceleracionX, 1) + SEP +
+                    String(aceleracionY, 1) + SEP +
+                    String(aceleracionZ, 1);
+
+
+  Serial.print(linea_a_enviar);
+
+
+/*
+  for (int i = 0; i < 5 ; i++) {          // linea_a_enviar.length()
+    do {
+      Serial.write(linea_a_enviar[i]);    // Push each char 1 by 1 on each loop pass
+    }
+    while (Serial.availableForWrite() == 0);
+  }
+*/
+/*
+  char textoEnvio[70];  // aprox 60 caracteres
+  snprintf(textoEnvio, 70,
+
+  //printf ("floats: %4.2f \n", 3.1416);
+
+            "%.2f, %f, %f, %f, %f, %i, %f, %f, %f, %f",
+            tiempoTranscurrido,
+            presionAdentro,
+            tempAdentro,
+            (presionAtmosferica + offset_presion),
+            tempAfuera,
+            contadorRueda,
+            distancia_float_0,
+            aceleracionX,
+            aceleracionY,
+            aceleracionZ
+          );
+  */
+
+/*
+  char textoEnvio[70];  // aprox 60 caracteres
+  linea_a_enviar.toCharArray(textoEnvio, linea_a_enviar.length() + 1);
+
+
+  Serial.write(textoEnvio);
+*/
+
+/*
+  const char pruebaEnvio[70] = "1234567890abcdefghijkmnñopqrstuvwxyz,.-{}[];:_!?¡'¿#$%&/()=|°*+";
+
+  for (int i = 0; i < 60 ; i++) {
+    do {
+      Serial.write(pruebaEnvio[i]);    // Push each char 1 by 1 on each loop pass
+    }
+    while (Serial.availableForWrite() == 0);
+  }
+*/
+
+  //Serial.write(contadorRueda); 
+  // salto de linea
+  Serial.write('\r');  
+  Serial.write('\n');  
+
 }
 
 void enviar_encabezados(){
